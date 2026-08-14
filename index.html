@@ -1820,8 +1820,13 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       const isRent = currentDocType === 'rent';
       const isReceiptOnly = currentDocType === 'receipt';
       const nameLabel = isReceiptOnly ? 'Payer name' : (isRent ? 'Tenant name' : 'Purchaser name');
+      const addPersonNoun = isReceiptOnly ? 'payer' : (isRent ? 'tenant' : 'purchaser');
       purchaserRowsEl.querySelectorAll('.p-name-label').forEach(el=>{ el.textContent = nameLabel; });
       purchaserRowsEl.querySelectorAll('.p-name').forEach(el=>{ el.placeholder = isReceiptOnly ? 'Full name of payer' : 'Full name as per NRIC/Passport/Co.'; });
+      const addPurchaserBtnEl = document.getElementById('addPurchaserBtn');
+      if(addPurchaserBtnEl) addPurchaserBtnEl.textContent = '+ Add another ' + addPersonNoun;
+      const addOwnerBtnEl = document.getElementById('addOwnerBtn');
+      if(addOwnerBtnEl) addOwnerBtnEl.textContent = '+ Add another ' + (isRent ? 'landlord' : 'owner');
       renumberOwners();
     }
 
