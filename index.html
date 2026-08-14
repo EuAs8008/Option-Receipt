@@ -1951,6 +1951,68 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       setStatus('Form reset.', 'ok');
     });
 
+    /* ---------- Load particulars from "Duplicate this document" (correcting/amending an earlier one) ---------- */
+    (function loadDuplicateSeedIfAny(){
+      let seedRaw;
+      try{ seedRaw = sessionStorage.getItem('otpDuplicateSeed'); } catch(e){ seedRaw = null; }
+      if(!seedRaw) return;
+      try{ sessionStorage.removeItem('otpDuplicateSeed'); } catch(e){ /* ignore */ }
+      let seed;
+      try{ seed = JSON.parse(seedRaw); } catch(e){ return; }
+
+      $('propertyDesc').value = seed.propertyDesc || '';
+      $('purchasePrice').value = seed.purchasePrice || '';
+      $('depositSum').value = seed.depositSum || '';
+      $('balanceDays').value = seed.balanceDays || '';
+      $('spaDays').value = seed.spaDays || '';
+      $('additionalClause').value = seed.additionalClause || '';
+
+      if(seed.tenancy){
+        const tOpt = document.querySelector('input[name=tenancyOption][value="' + seed.tenancy + '"]');
+        if(tOpt) tOpt.checked = true;
+      }
+
+      const payOpt = document.querySelector('input[name=payMethod][value="' + (seed.payMethod || 'Cash') + '"]');
+      if(payOpt){
+        payOpt.checked = true;
+        payOpt.dispatchEvent(new Event('change'));
+      }
+      if(seed.payMethod === 'Cheque'){
+        $('chequeNo').value = seed.chequeNo || '';
+        $('chequeDate').value = seed.chequeDate || '';
+      } else if(seed.payMethod === 'Bank Transfer'){
+        $('transferRef').value = seed.transferRef || '';
+        $('transferDate').value = seed.transferDate || '';
+      }
+
+      purchaserRowsEl.innerHTML = '';
+      (seed.purchasers && seed.purchasers.length ? seed.purchasers : [{}]).forEach(p=>{
+        addPurchaserRow();
+        const row = purchaserRowsEl.lastElementChild;
+        row.querySelector('.p-name').value = p.name || '';
+        row.querySelector('.p-idtype').value = p.idType || 'NRIC';
+        row.querySelector('.p-id').value = p.idNo || '';
+      });
+      updateRemoveButtons();
+
+      ownerRowsEl.innerHTML = '';
+      (seed.owners && seed.owners.length ? seed.owners : [{}]).forEach(o=>{
+        addOwnerRow();
+        const row = ownerRowsEl.lastElementChild;
+        row.querySelector('.o-name').value = o.name || '';
+        row.querySelector('.o-idtype').value = o.idType || 'NRIC';
+        row.querySelector('.o-id').value = o.idNo || '';
+      });
+      updateOwnerRemoveButtons();
+      renumberOwners();
+
+      setStatus(
+        'Loaded particulars from ' + (seed.sourceSerial || 'the previous document') +
+        ' — review carefully and correct anything needed, then verify your name and Send for Signing. This creates a brand-new, separate document with its own serial number; the original is untouched.',
+        'ok'
+      );
+    })();
+
   /* ================= MODE: staff dashboard / purchaser / owner signing link ================= */
   } else {
     otpForm.style.display = 'none';
@@ -2004,6 +2066,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     const stage = draft.status;
     const idx = stageIndex(stage);
     const sLink = linkFor('staff', rowKey);
+    const baseFormLink = window.location.origin + window.location.pathname;
 
     let html = `
       <div class="card">
@@ -2020,6 +2083,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
           <input type="text" readonly value="${escapeHtml(sLink)}" onclick="this.select()">
           <button type="button" class="btn btn-secondary copy-link-btn" data-link="${escapeHtml(sLink)}">Copy</button>
         </div>
+        <a class="btn btn-secondary" style="margin-top:10px;display:inline-block;" href="${escapeHtml(baseFormLink)}" target="_blank" rel="noopener">＋ Start a new document / generate a deposit receipt</a>
+        <button type="button" class="btn btn-secondary" style="margin-top:10px;" id="duplicateDocBtn">⧉ Duplicate this document (to correct or amend)</button>
       </div>
     `;
 
@@ -2103,6 +2168,33 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         runFinalize(rowKey, draft, 'finalizeStatusLine');
       });
     }
+
+    document.getElementById('duplicateDocBtn').addEventListener('click', function(){
+      const seed = {
+        sourceSerial: draft.serial || '',
+        propertyDesc: draft.propertyDesc || '',
+        purchasePrice: draft.purchasePrice || '',
+        depositSum: draft.depositSum || '',
+        payMethod: draft.payMethod || 'Cash',
+        chequeNo: draft.chequeNo || '',
+        chequeDate: draft.chequeDate || '',
+        transferRef: draft.transferRef || '',
+        transferDate: draft.transferDate || '',
+        balanceDays: draft.balanceDays || '',
+        spaDays: draft.spaDays || '',
+        tenancy: draft.tenancy || '',
+        additionalClause: draft.additionalClause || '',
+        purchasers: (draft.purchasers || []).map(p => ({name: p.name || '', idType: p.idType || 'NRIC', idNo: p.idNo || ''})),
+        owners: (draft.owners || []).map(o => ({name: o.name || '', idType: o.idType || 'NRIC', idNo: o.idNo || ''}))
+      };
+      try{
+        sessionStorage.setItem('otpDuplicateSeed', JSON.stringify(seed));
+      } catch(e){
+        alert('Could not prepare the duplicate (' + e.message + '). Your browser may be blocking storage — try a normal (non-private) browser window.');
+        return;
+      }
+      window.location.href = baseFormLink;
+    });
   }
 
   /* ---------- Purchaser / owner personal signing view ---------- */
