@@ -1419,15 +1419,25 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
      Used both by the blank-form "Generate Deposit Receipt" button and the
      staff dashboard's "for this case" receipt button. Reserves a serial from
      the backend BEFORE rendering (so it's baked correctly into the printed
-     PDF), renders, logs/emails via the backend, then downloads. */
-  async function generateAndDeliverReceipt(raw, setStatusFn){
+     PDF), renders, logs/emails via the backend, then downloads.
+
+     When opts.rowKey is given, the receipt is tied to that OTP case: the
+     backend reuses the case's existing receipt serial if one was already
+     issued (instead of minting a new one), and updates that same Receipts
+     Log row/PDF in place — so regenerating a case's receipt amends it rather
+     than creating a second, separate receipt for the same case. Returns
+     {serial, pdfLink, isUpdate} so the caller can reflect the result in the UI. */
+  async function generateAndDeliverReceipt(raw, setStatusFn, opts){
+    const rowKey = opts && opts.rowKey;
     let serial = 'RCPT-LOCAL-' + Math.random().toString(36).slice(2, 8).toUpperCase();
     let backendFailed = false;
 
     if(BACKEND_URL){
       setStatusFn('Reserving receipt number…');
       try{
-        const reserveRes = await postJSON(BACKEND_URL, {action: 'reserveReceiptSerial'});
+        const reserveRes = await postJSON(BACKEND_URL, rowKey
+          ? {action: 'reserveCaseReceiptSerial', rowKey}
+          : {action: 'reserveReceiptSerial'});
         serial = reserveRes.serial;
       } catch(err){
         console.error('reserveReceiptSerial failed', err);
@@ -1443,11 +1453,13 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     buildReceiptPages(raw);
     const pdf = await renderPdf();
 
+    let pdfLink = null;
+    let isUpdate = false;
     if(BACKEND_URL && !backendFailed){
       setStatusFn('Logging receipt and emailing…');
       try{
         const pdfBase64 = pdf.output('datauristring').split(',')[1];
-        await postJSON(BACKEND_URL, {
+        const res = await postJSON(BACKEND_URL, Object.assign({
           action: 'createReceipt',
           serial,
           staffName: raw.staffName, staffEmail: raw.staffEmail,
@@ -1456,8 +1468,15 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
           chequeNo: raw.chequeNo, chequeDate: raw.chequeDate,
           transferRef: raw.transferRef, transferDate: raw.transferDate,
           hasSlip: !!raw.slipImage, pdfBase64
-        });
-        setStatusFn(`Receipt ${serial} generated, logged to Drive, and emailed. Downloading your copy…`, 'ok');
+        }, rowKey ? {rowKey} : {}));
+        pdfLink = res.pdfLink || null;
+        isUpdate = !!res.isUpdate;
+        setStatusFn(
+          isUpdate
+            ? `Receipt ${serial} updated, logged to Drive, and emailed. Downloading your copy…`
+            : `Receipt ${serial} generated, logged to Drive, and emailed. Downloading your copy…`,
+          'ok'
+        );
       } catch(err){
         console.error('createReceipt failed', err);
         setStatusFn('Receipt PDF generated, but logging/emailing failed (' + err.message + '). Downloading your copy — please forward it manually.', 'err');
@@ -1466,6 +1485,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       setStatusFn('Receipt generated locally (central logging not set up — see SETUP_GUIDE.md). Downloading…', 'ok');
     }
     pdf.save(`Deposit-Receipt-${serial}.pdf`);
+    return {serial, pdfLink, isUpdate};
   }
 
   /* ================= MODE: staff particulars form ================= */
@@ -2158,12 +2178,21 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
     // Deposit receipt card — available at every stage (not just Completed), since payment
     // is often collected before or during signing, not only after it fully wraps up.
+    // This case's receipt number stays fixed once first issued: regenerating (e.g. to
+    // attach a slip photo that was missed) amends that same receipt, it never mints a
+    // second receipt number for the same case.
     {
       const isTransfer = draft.payMethod === 'Bank Transfer';
+      const hasReceipt = !!draft.receiptSerial;
       html += `
         <div class="card">
           <h2><span class="num">🧾</span> Deposit Receipt</h2>
           <p class="sub">Generate the official deposit receipt for this case using the particulars already on file — no need to start a new document or retype anything.</p>
+          <div id="caseReceiptInfo" class="sub" style="${hasReceipt ? '' : 'display:none;'}">
+            This case's receipt: <b id="caseReceiptSerialText">${escapeHtml(draft.receiptSerial || '')}</b>
+            <span id="caseReceiptLinkWrap">${draft.receiptPdfLink ? ` — <a href="${escapeHtml(draft.receiptPdfLink)}" target="_blank" rel="noopener" id="caseReceiptLink">view current PDF</a>` : ''}</span>
+            <br>Regenerating below updates this same receipt — it will not create a new receipt number.
+          </div>
           ${isTransfer ? `
             <div class="field">
               <label for="caseSlipInput">Bank transfer slip <span class="opt">(optional — take a photo or upload a file)</span></label>
@@ -2171,7 +2200,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
               <div id="caseSlipPreview" style="margin-top:8px;"></div>
             </div>
           ` : ''}
-          <button type="button" class="btn btn-secondary" id="generateCaseReceiptBtn">🧾 Generate Deposit Receipt</button>
+          <button type="button" class="btn btn-secondary" id="generateCaseReceiptBtn">${hasReceipt ? '🧾 Regenerate Deposit Receipt' : '🧾 Generate Deposit Receipt'}</button>
           <div class="status-line" id="caseReceiptStatusLine"></div>
         </div>
       `;
@@ -2251,7 +2280,24 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
             transferDate: draft.transferDate || '',
             slipImage: caseSlipDataUrl
           };
-          await generateAndDeliverReceipt(raw, setCaseStatus);
+          const result = await generateAndDeliverReceipt(raw, setCaseStatus, {rowKey});
+
+          // Reflect the (possibly now-first-issued) receipt serial/link in the UI,
+          // and switch the button to "Regenerate" — without wiping the status line
+          // above, which still shows the success message from generateAndDeliverReceipt.
+          if(result && result.serial){
+            draft.receiptSerial = result.serial;
+            if(result.pdfLink) draft.receiptPdfLink = result.pdfLink;
+            const infoEl = document.getElementById('caseReceiptInfo');
+            const serialTextEl = document.getElementById('caseReceiptSerialText');
+            const linkWrapEl = document.getElementById('caseReceiptLinkWrap');
+            if(infoEl) infoEl.style.display = '';
+            if(serialTextEl) serialTextEl.textContent = draft.receiptSerial;
+            if(linkWrapEl && draft.receiptPdfLink){
+              linkWrapEl.innerHTML = ' — <a href="' + escapeHtml(draft.receiptPdfLink) + '" target="_blank" rel="noopener">view current PDF</a>';
+            }
+            btn.textContent = '🧾 Regenerate Deposit Receipt';
+          }
         } catch(err){
           console.error(err);
           setCaseStatus('Could not generate receipt (' + err.message + ').', 'err');
