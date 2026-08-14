@@ -2147,13 +2147,20 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         </div>
       `;
     } else if(stage === 'Completed'){
-      const isTransfer = draft.payMethod === 'Bank Transfer';
       html += `
         <div class="card">
           <h2><span class="num">✓</span> Completed</h2>
           <p class="sub">This Option to Purchase has been fully signed, logged, and emailed.</p>
           ${draft.pdfLink ? `<a class="btn btn-secondary" href="${escapeHtml(draft.pdfLink)}" target="_blank" rel="noopener">Open signed PDF</a>` : ''}
         </div>
+      `;
+    }
+
+    // Deposit receipt card — available at every stage (not just Completed), since payment
+    // is often collected before or during signing, not only after it fully wraps up.
+    {
+      const isTransfer = draft.payMethod === 'Bank Transfer';
+      html += `
         <div class="card">
           <h2><span class="num">🧾</span> Deposit Receipt</h2>
           <p class="sub">Generate the official deposit receipt for this case using the particulars already on file — no need to start a new document or retype anything.</p>
@@ -2192,7 +2199,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       });
     }
 
-    if(stage === 'Completed'){
+    {
       const caseSlipInput = document.getElementById('caseSlipInput');
       const caseSlipPreview = document.getElementById('caseSlipPreview');
       let caseSlipDataUrl = '';
