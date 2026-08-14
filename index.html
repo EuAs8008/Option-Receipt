@@ -1939,7 +1939,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       try{
         setStatus('Creating document and reserving a serial number…');
         const raw = collectStaffFormData();
-        const res = await postJSON(BACKEND_URL, Object.assign({action:'createDraft'}, raw));
+        // If a deposit receipt was already generated on this same form (before sending for
+        // signing), carry its serial over to the new case so it stays the ONE receipt for
+        // this case — otherwise the case would start with no receipt on file and later
+        // generating one from its dashboard would mint a brand-new, disconnected serial.
+        const createDraftPayload = Object.assign({action:'createDraft'}, raw);
+        if(standaloneReceiptSerial){
+          createDraftPayload.existingReceiptSerial = standaloneReceiptSerial;
+          if(standaloneReceiptPdfLink) createDraftPayload.existingReceiptPdfLink = standaloneReceiptPdfLink;
+        }
+        const res = await postJSON(BACKEND_URL, createDraftPayload);
         setSerialDisplay(res.serial);
         const rowKey = res.rowKey;
         const sLink = linkFor('staff', rowKey);
@@ -1964,6 +1973,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
        than minting a new receipt number every time — e.g. after fixing a photo or a typo'd ref no. */
     const generateReceiptBtnEl = document.getElementById('generateReceiptBtn');
     let standaloneReceiptSerial = null;
+    let standaloneReceiptPdfLink = null;
     document.getElementById('generateReceiptBtn').addEventListener('click', async function(){
       if(!validateReceiptData()) return;
       const btn = this;
@@ -1973,6 +1983,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         const result = await generateAndDeliverReceipt(raw, setStatus, {existingSerial: standaloneReceiptSerial});
         if(result && result.serial){
           standaloneReceiptSerial = result.serial;
+          if(result.pdfLink) standaloneReceiptPdfLink = result.pdfLink;
           generateReceiptBtnEl.textContent = '🧾 Regenerate Deposit Receipt';
         }
       } catch(err){
@@ -2000,6 +2011,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       setStaffVerifyStatus(BACKEND_URL ? 'Enter your name above, then tap/click out of the field to verify.' : '', '');
       // A fresh form means a fresh case — the next receipt generated should be a new one.
       standaloneReceiptSerial = null;
+      standaloneReceiptPdfLink = null;
       generateReceiptBtnEl.textContent = '🧾 Generate Deposit Receipt';
       setStatus('Form reset.', 'ok');
     });
